@@ -38,7 +38,7 @@ except:
 #Initialising query_recipient_data[chat_id of expert answering the query] = chat_id of the user who asked the query
 query_recipient_data = {}
 
-bot = Bot(token="1732516218:AAG5J9nNCNcNx9v4-_Ay_PE0r3YzXXLCRDE")
+bot = Bot(token="1732516218:AAHFSWoMwJ35ZcemIRZDgYlvU-8r5oHC8EM")
 
 
 
