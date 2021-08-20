@@ -3,9 +3,17 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, ParseMode, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
 import pandas as pd
+import os
+
 from utils import custom_reply_handler
-from support import update_chat_id, update_messages_logs, num_handler, logs, inline_keyboards, music_thearpy, get_message, cbt_handler, doubt_issue
-from admin_expert import accept_request, delete_expert_acc, generate_all_doubts, get_queries, get_statistics, process_query, send_query_answer, validate_admin, admin, save_expert_request, expert_requests, experts_list, announcement, get_expert_request, accept_request, reject_request, get_expert_for_removing
+
+from user import update_chat_id, update_messages_logs, num_handler, music_thearpy, get_message, cbt_handler, doubt_issue
+from user import logs, inline_keyboards
+
+#from admin_expert import accept_request, delete_expert_acc, generate_all_doubts, get_queries, get_statistics, process_query, send_query_answer, validate_admin, admin, save_expert_request, expert_requests, experts_list, announcement, get_expert_request, accept_request, reject_request, get_expert_for_removing
+from admin_expert import *
+
+
 
 # Enable logging
 logging.basicConfig(
@@ -14,16 +22,32 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-TOKEN = "1732516218:AAGTpXB4HeMgP4qROqh4orLwY42ipAsarp8"
+TOKEN = "1732516218:AAG5J9nNCNcNx9v4-_Ay_PE0r3YzXXLCRDE" #dummy
 
 
 ######   List of different label    ######
+# Following list contains the total number of message labels which 
+# just have callback query of numbers to be processed by single condition
+# in option_selector method
 num_handler_list = ["a", "b", "c", "e", "b1", "y", "w"]
 
-#admin object
-admin_object = None
+# list of users who had initiated /become_expert command
+become_expert_list = []
 
+############   Initializing admin object    ##################
+try:
+    admin_object = None
+    with open("Resources/admin/admin.txt", "r") as file:
+        chat_id = int(file.readline())
+        
+        admin_object = admin(chat_id, "?WN34Az8p^wRURc5-k3!")
+        
+        logger.info(" Admin object initialized\n")
+        logs[chat_id] = 'z'
 
+except:
+    admin_object = None
+###############################################################
 
 # Defining command handlers. 
 
@@ -60,24 +84,30 @@ def help_command(update: Update, _: CallbackContext) -> None:
     logger.info(str(update.message.chat_id) + " - help command initiated")
 
     update.message.reply_text(get_message("help"), parse_mode=ParseMode.HTML)
-    if admin_object.check_chat_id(update.message.chat_id):
+    if admin_object != None and admin_object.check_chat_id(update.message.chat_id):
         update.message.reply_text(get_message("admin_help"), parse_mode=ParseMode.HTML)
     elif update.message.chat_id in experts_list:
         update.message.reply_text(get_message("expert_help"), parse_mode=ParseMode.HTML)
 
 def contact(update: Update, _: CallbackContext):
+    
+    if update.message.chat_id in become_expert_list:
+    
+        logger.info(str(update.message.chat_id) + " - Contact recieved")
+        if update.message.chat_id in expert_requests:
+            update.message.reply_text("you already requested for expert. Please wait for approval by admin.")
+            return
+        bool, reply =  save_expert_request(update.message.chat_id, update.message.from_user.full_name, update.message.contact.phone_number)
+        if bool == True:
+            logger.info(str(update.message.chat_id) + " - User requested for expert")
+            update.message.reply_text(reply)
+            become_expert_list.remove(update.message.chat_id)
 
-    logger.info(str(update.message.chat_id) + " - Contact recieved")
-
-    if update.message.chat_id in expert_requests:
-        update.message.reply_text("you already requested for expert. Please wait for approval by admin.")
-        return
-    bool, reply =  save_expert_request(update.message.chat_id, update.message.from_user.full_name, update.message.contact.phone_number)
-    if bool == True:
-        logger.info(str(update.message.chat_id) + " - User requested for expert")
-        update.message.reply_text(reply)
+        else:
+            update.message.reply_text(reply)
+    
     else:
-        update.message.reply_text(reply)
+        update.message.reply_text("Please don't send contact.")
 
 #####################  admin commands ########################
 
@@ -170,18 +200,25 @@ def statistics(update:Update, _: CallbackContext):
 ###################### expert commands ##########################
 
 def become_expert(update:Update, _:CallbackContext):
+    
+    if admin.admin_created == False:
+        update.message.reply_text("Sorry, your request to become expert can't be processed because admin is offline.")
+        return
+
     contact_keyboard = KeyboardButton(text="Click this button to send phone number.",request_contact=True)
-    reply_markup = ReplyKeyboardMarkup([[ contact_keyboard ]], one_time_keyboard=True)
+    reply_markup = ReplyKeyboardMarkup([[ contact_keyboard ]],resize_keyboard=True, one_time_keyboard=True)
 
     logger.info(str(update.message.chat_id) + " - become_expert command initiated")
     
     if update.message.chat_id in experts_list:
         update.message.reply_text("You is already an expert.")
         return
-    if update.message.chat_id in expert_requests:
-        update.message.reply_text("you already requested for expert. Please wait for approval by admin.")
+    elif update.message.chat_id in expert_requests:
+        update.message.reply_text("you already requested to become expert. Please wait for approval by admin.")
         return
+    
     update.message.reply_text("Click 👇 button to send phone number.\nIt is mandatory to give phone number for verification purpose.", reply_markup=reply_markup)
+    become_expert_list.append(update.message.chat_id)
     
 def answer_query(update:Update, _:CallbackContext):
     if update.message.chat_id in experts_list or admin_object.check_chat_id(update.message.chat_id):
@@ -191,7 +228,7 @@ def answer_query(update:Update, _:CallbackContext):
         reply, keyboard = get_queries()
         update.message.reply_text(reply)
         try:
-            update.message.reply_text("select the question you weant to answer", reply_markup=InlineKeyboardMarkup(keyboard))
+            update.message.reply_text("select the question you want to answer", reply_markup=InlineKeyboardMarkup(keyboard))
         except:
             pass
 
@@ -260,6 +297,10 @@ def reply_text(update: Update, _: CallbackContext) -> None:
                 admin_object = admin(update.message.chat_id, update.message.text)
 
                 logger.info(" ADMIN LOGGED IN - Admin object created")
+
+                #Saving the chat_id in the file
+                with open("Resources/admin/admin.txt", "w") as file:
+                    file.write(str(update.message.chat_id))
             
             update.message.reply_text(reply)
             update.message.reply_text(get_message("admin_help"), parse_mode= ParseMode.HTML)
@@ -270,15 +311,18 @@ def reply_text(update: Update, _: CallbackContext) -> None:
             
             if admin_object.check_chat_id(update.message.chat_id) and admin_object.admin_log == "admin_logout":
                 if admin_object.check_security_key(str(update.message.text)):
-                    
+
                     admin.admin_created = False
                     admin_object = None
                     update.message.reply_text("Logout successfully")
                     
                     logger.info("ADMIN LOGGED OUT - Admin object deleted")
+
+                    # Deleting the admin file in which chat_id is stored
+                    os.remove("Resources/admin/admin.txt")
                 
                 else:
-                    update.message.reply_text("Incorrect security key passed")
+                    update.message.reply_text("Incorrect security key sent")
                 logs[update.message.chat_id] = 'z'
                 return
 
@@ -302,8 +346,10 @@ def reply_text(update: Update, _: CallbackContext) -> None:
 
                     return
 
-    except:
-        
+
+    except: # this part is when somehow the logs is deleted and user send custom message
+
+
         if update.message.text in ["hello", "hi", "hey", "Hello", "Hi", "Hey"]:
             update.message.reply_text(get_message("a"), parse_mode=ParseMode.HTML)
             logs[update.message.chat_id] = "a"
@@ -318,9 +364,9 @@ def reply_text(update: Update, _: CallbackContext) -> None:
             update.message.reply_text("Select respective option", reply_markup=InlineKeyboardMarkup(keyboard))
         except:
             pass
+        print("Curret log from reply_text() - ", logs[update.message.chat_id])
 
     else:
-        
         if update.message.text in ["hello", "hi", "hey", "Hello", "Hi", "Hey"]:
             update.message.reply_text(get_message("a"), parse_mode=ParseMode.HTML)
             logs[update.message.chat_id] = "a"
@@ -335,19 +381,49 @@ def reply_text(update: Update, _: CallbackContext) -> None:
             update.message.reply_text("Select respective option", reply_markup=InlineKeyboardMarkup(keyboard))
         except:
             pass
+
 
 
 
 def option_selector(update: Update, _: CallbackContext):
     """ Handles the query(the number selected in the inline keyboard)"""
+    
     query = update.callback_query
     text = query.data   # data send back by Inkine Keyboard
 
     logger.info(str(query.message.chat_id) + " - Callback query recieved  - {}".format(text))
-    
+
     try:
         if logs[query.message.chat_id] != "cbt":
             query.edit_message_text("Here we go")
+
+        ########## Following part will be used by expert and admin only ###################
+        if query.message.chat_id in experts_list or admin_object.check_chat_id(query.message.chat_id):
+            
+            if logs[query.message.chat_id] == "get_query":
+                reply = process_query(query.message.chat_id, int(text))
+                query.message.reply_text(reply, parse_mode=ParseMode.HTML)
+                logs[query.message.chat_id] = "ans_query" 
+                return
+
+            elif admin.admin_log == "a_expert": # accepting/rejecting expert 
+                if int(text) == 1: # accepting the user request
+                    reply = accept_request()
+                elif int(text) == 0: # rejecting the user request
+                    reply = reject_request()
+                query.message.reply_text(reply, parse_mode=ParseMode.HTML)
+                admin.admin_log = None
+                return
+
+            elif admin.admin_log == "r_expert": # removing expert
+                reply = delete_expert_acc(int(text))
+                query.message.reply_text(reply, parse_mode=ParseMode.HTML)
+                admin.admin_log = None
+                return
+            
+            # Setting the admin log to None because it could lead error "single positional indexer is out-of-bounds" in both elif statements.
+            
+        ##################################################################################
 
         if logs[query.message.chat_id] in num_handler_list and text.isnumeric(): # for 1,2,4 of services
             reply, image, link, keyboard = num_handler(query.message.chat_id, int(text))
@@ -432,42 +508,31 @@ def option_selector(update: Update, _: CallbackContext):
             with open("Resources/Stickers/Pencil.tgs", "rb") as s:
                 query.message.reply_sticker(s)
             logs[query.message.chat_id] = text
-            query.message.reply_text("Please write your {}.".format(text))
+            query.message.reply_text("Please write your {}.".format(text)) 
 
-        elif ( query.message.chat_id in experts_list or admin_object.check_chat_id(query.message.chat_id) ) and logs[query.message.chat_id] == "get_query":
-            reply = process_query(query.message.chat_id, int(text))
-            query.message.reply_text(reply, parse_mode=ParseMode.HTML)
-            logs[query.message.chat_id] = "ans_query" 
+        print("current log - ", logs[query.message.chat_id])
 
-        elif admin_object.check_chat_id(query.message.chat_id) and admin.admin_log == "a_expert": # accepting/rejecting expert 
-            if int(text) == 1: # accepting the user request
-                reply = accept_request()
-            elif int(text) == 0: # rejecting the user request
-                reply = reject_request()
-            query.message.reply_text(reply, parse_mode=ParseMode.HTML)
-
-        elif admin_object.check_chat_id(query.message.chat_id) and admin.admin_log == "r_expert": # removing expert
-            reply = delete_expert_acc(int(text))
-            query.message.reply_text(reply, parse_mode=ParseMode.HTML)
-
-    except:
+    except Exception as E:
+        
         query.message.reply_text(get_message("error"), parse_mode=ParseMode.HTML)
+        logger.error(str(query.message.chat_id) + " - {}".format(E))
     
 
 
 
 def main():
-
+    print(logs)
     updater = Updater(TOKEN)
     dispatcher = updater.dispatcher
     
+    # Following commands are user centric but can be used by anyone
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("admin_login", admin_login))
     dispatcher.add_handler(CommandHandler("services", services))
     dispatcher.add_handler(CommandHandler("become_expert", become_expert))
 
-    # following commands can only be used by admin
+    # Following commands can only be used only by admin
     dispatcher.add_handler(CommandHandler("accept_expert_request", accept_expert_request))
     dispatcher.add_handler(CommandHandler("remove_expert", remove_expert))
     dispatcher.add_handler(CommandHandler("admin_logout", admin_logout))
@@ -475,7 +540,7 @@ def main():
     dispatcher.add_handler(CommandHandler("experts_list", experts_list_command))
     dispatcher.add_handler(CommandHandler("statistics", statistics))
     
-    #following commands can be used by expert and admin
+    # Following commands can be used by expert and admin
     dispatcher.add_handler(CommandHandler("answer_query", answer_query))
     dispatcher.add_handler(CommandHandler("announce", announce))
     dispatcher.add_handler(CommandHandler("get_doubts", get_doubts))
@@ -483,11 +548,12 @@ def main():
     
     dispatcher.add_handler(CallbackQueryHandler(option_selector, run_async=True))
     
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, reply_text, run_async=True))
+    dispatcher.add_handler(MessageHandler(Filters.text, reply_text, run_async=True))
+    
     dispatcher.add_handler(MessageHandler(Filters.contact, contact))
     
     updater.start_polling()
-    logger.info("Listening...\n\n")
+    logger.info("Listening to telegram...\n\n")
     updater.idle()
 
 if __name__ == '__main__':

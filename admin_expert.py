@@ -1,11 +1,10 @@
 import logging
-from types import resolve_bases
-
 from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
-from support import records_updater
-from telegram import Bot, message, user
+from telegram import Bot
 import pandas as pd
 import numpy as np
+
+from user import records_updater
 
 # Enable logging
 logging.basicConfig(
@@ -39,8 +38,7 @@ except:
 #Initialising query_recipient_data[chat_id of expert answering the query] = chat_id of the user who asked the query
 query_recipient_data = {}
 
-
-bot = Bot(token="1732516218:AAGTpXB4HeMgP4qROqh4orLwY42ipAsarp8")
+bot = Bot(token="1732516218:AAG5J9nNCNcNx9v4-_Ay_PE0r3YzXXLCRDE")
 
 
 
@@ -73,10 +71,10 @@ def validate_admin(chat_id, security_key):
     elif admin.admin_created == True and security_key == "?WN34Az8p^wRURc5-k3!":
         if(admin.chat_id == chat_id):
             return False, "You is already logged in as admin."
-        return False, "Unsuccessful login admin already exists."
+        return False, "Unsuccessful login, admin already exists."
     
     elif security_key != "?WN34Az8p^wRURc5-k3!":
-        return False, "Unsuccessful login security key is wrong please retry."
+        return False, "Unsuccessful login, security key is wrong please retry."
 
 
 
@@ -97,7 +95,9 @@ def save_expert_request(chat_id, name, phone_number):
     records_updater("Resources/Experts/requests.csv", str(chat_id) + "," + name + "," + phone_number)
     return True, "Request for becoming expert is successfully sent to admin please wait for approval."
 
-def get_expert_request():
+def get_expert_request(): 
+    """ used by user to get request info and decide whether to accept or reject the request"""
+    
     df = pd.read_csv("Resources/Experts/requests.csv")
     if df.shape[0] == 0:
         return False
@@ -120,12 +120,12 @@ def accept_request():
     logger.info(str(user_data[0]) + " - accepting request of user as expert") 
 
     #sending confirmation message to the user of request approval
-    bot.send_message(str(user_data[0]), "Congratulations, admin accepted your request as an expert.")
+    bot.send_message(str(user_data[0]), "🥳🥳 Congratulations, admin accepted your request as an expert.")
     return "Successfully accepted the request of {} as our expert.\n\nRemaining experts request are {}.\n\n<b>Please use /accept_expert_request to accept them.</b>".format(user_data[1], str(len(expert_requests)))
 
 
 def reject_request():
-    #updating the file(delete the request data from requests.csv)
+    #updating the file(deleting the request data from requests.csv)
     df = pd.read_csv("Resources/Experts/requests.csv")
     user_data = df.iloc[0]
     df = df[1:][:]
@@ -148,9 +148,12 @@ def get_expert_for_removing():
     keyboard = []
     df_experts = pd.read_csv("Resources/Experts/approved_experts.csv")
     experts_array = df_experts.values
+
     if experts_array.shape[0] == 0:
         return "<b>Sorry, there are no experts registered.</b>", None
+    
     idx = 0
+    
     for user_data in experts_array:
         keyboard.append([InlineKeyboardButton("{} - {}".format(user_data[1], user_data[2]), callback_data=idx)])
         idx += 1
@@ -180,7 +183,7 @@ def delete_expert_acc(idx):
     return "Successfully removed {} as our expert.\n\n<b>For removing more expert click - /remove_expert</b>".format(user_data[1])
 
 
-############  Functions to process queriers/doubts asked by expert ##################
+############  Functions to process queriers/doubts asked by user ##################
 
 def get_queries():
     df_query = pd.read_csv("Resources/Records/doubts.csv")
@@ -267,7 +270,7 @@ def get_statistics():
     message += "Number of expert requests pending : <b>{}</b>\n\n".format(len(expert_requests))
 
     # no of cbt
-    from support import cbt_takers_count
+    from user import cbt_takers_count # to get real time value 
     message += "Number of <i>CBT therapy</i> taken : <b>{}</b>\n".format(cbt_takers_count)
 
     return message
@@ -287,6 +290,7 @@ def generate_all_doubts():
     ur_array = np.array(ur_df)
 
     if r_array.shape[0] != 0 and ur_array.shape[0] != 0: 
+        
         #creating and adding column for status
         status = np.array(["Unresolved" for i in range(ur_array.shape[0])])
         status = status.reshape(ur_array.shape[0],-1)

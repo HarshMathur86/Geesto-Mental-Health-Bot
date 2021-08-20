@@ -1,13 +1,13 @@
-from logging import Logger
 import os
 import dialogflow_v2 as dialogflow
-from support import get_message, inline_keyboards, logs
+
+from user import get_message, inline_keyboards, logs
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "mental-health-bot.json"
 
 
 dialogflow_session_client = dialogflow.SessionsClient()
-PROJECT_ID = "mental-health-bot-fbpm"
+PROJECT_ID = "mental-health-bot-fbpm"#dummy
 
 
 custom_messages = {
@@ -24,11 +24,16 @@ activity_labels = {
     "meditation": "e"
 }
 
-def detect_intent_from_text(text, session_id, language_code='en'):
+def detect_intent_from_text(text, session_id, language_code='en'): 
+    
+    # session id is just a randon number for dialogflow api in order to keep track of 
+    # previously send message so we will pass chat_id here because it is always unique
+
     session = dialogflow_session_client.session_path(PROJECT_ID, session_id)
     text_input = dialogflow.types.TextInput(text=text, language_code=language_code)
     query_input = dialogflow.types.QueryInput(text=text_input)
     response = dialogflow_session_client.detect_intent(session=session, query_input=query_input)
+    
     return response.query_result
 
 def custom_reply_handler(user_message, chat_id):
@@ -48,6 +53,8 @@ def custom_reply_handler(user_message, chat_id):
 
             else:
                 return "Sorry unable to understand, mental health bot is still learning.\nPlease click - /services for guided chat", None
+        
+        # Following else handles the smalltalk
         else:
             reply = str(response.fulfillment_text)
             return reply, None
