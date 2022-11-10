@@ -1,10 +1,10 @@
 import logging
 from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
-from telegram import Bot
+from telegram import Bot, ParseMode, InlineKeyboardMarkup
 import pandas as pd
 import numpy as np
 
-from user import records_updater
+from user import records_updater, message
 
 from database import execute_query
 
@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 #Initialising experts list containg chat_id of experts
+
+expert_objects = {}
+
+
 try:
     df = pd.read_csv("Resources/Experts/approved_experts.csv")
     experts_list  = df.chat_id.values
@@ -38,6 +42,7 @@ except:
 #Initialising query_recipient_data[chat_id of expert answering the query] = chat_id of the user who asked the query
 query_recipient_data = {}
 
+bot = Bot(token="SAMPLE")
 
 ############## Admin Class #####################
 
@@ -76,7 +81,7 @@ class Admin():
         execute_query("delete from ADMIN where chat_id = {}".format(chat_id))
 
         self.admin_chat_id = None
-        self.admin_exists = False
+        Admin.admin_exists = False
         logger.info(" ADMIN LOGGED OUT")
 
     def check_chat_id(self, chat_id): # REJECTED
@@ -84,10 +89,9 @@ class Admin():
         return self.admin_chat_id == chat_id
 
     def is_user_admin(self, chat_id):
-        data = execute_query("select chat_id from ADMIN;")
 
         try:
-            if chat_id == int(data[0]["chat_id"]):
+            if chat_id == self.admin_chat_id:
                 return True
             else:
                 return False
@@ -97,128 +101,154 @@ class Admin():
 
     def get_chat_id(self):
         return self.admin_chat_id
+        
 
+    def send_message_to_admin(message, keyboard = None):
+        if Admin.admin_exists:
+            data = execute_query("select chat_id from admin;")
+            if keyboard is None:
+                bot.send_message(int(data[0]["chat_id"]), message, parse_mode=ParseMode.HTML)
+            else:
+                bot.send_message(int(data[0]["chat_id"]), message, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+        
         
 #################################################
-############   Initializing admin object    ##################
-try:
-    admin_object = Admin()
-except:
-    admin_object = None
-###############################################################
+
+class Expert(): # specifically for processing user's request to become an expert 
+    def __init__(self, chat_id, contact_number):
+        self.chat_id = chat_id
+        self.contact_number = None
+        self.name = None
+
+        print(type(contact_number))
+        if len(str(contact_number)) > 10:
+            if contact_number.startswith("+"):
+                self.contact_number = contact_number[3:]
+            else:
+                self.contact_number = contact_number[2:]
+
+        print(self.contact_number)
+        bot.send_message(chat_id, "Please send your name.")
+
+    def add_name(self, name):
+        name.replace('\n', ' ')
+        self.name = name
+
+    def send_request(self):
+        # Generating expert id
+        data = execute_query("select max(expert_id) from experts_detail;")
+        try:
+            id = data[0]["max"] + 1
+        except:
+            id = 1
+            
+        execute_query("insert into EXPERTS_DETAIL values({}, {}, '{}', {}, FALSE);".format(
+                self.chat_id, id, self.name, self.contact_number
+            ))
+
+        bot.send_message(self.chat_id, "Request for becoming expert is successfully received please wait for approval.")
 
 
+    def is_expert(chat_id, applied = False):
+        """This function will check whether a user has already applied for expert role or is an expert"""
+        data = execute_query("select approved_or_not from EXPERTS_DETAIL where expert_chat_id = {}".format(chat_id))
 
-
-
-class Expert():
-    def __init__(self):
-        pass
-
-
-############  Functions to process user request to become expert ################## 
-
-def save_expert_request(chat_id, name, phone_number):
-    
-    if len(str(phone_number)) > 10:
-        if phone_number.startswith("+"):
-            phone_number = phone_number[3:]
+        if len(data) == 0:
+            return False
+        elif applied:
+            if data[0]["approved_or_not"] is False:
+                # Used when user try to apply for expert role more than one 
+                return True
         else:
-            phone_number = phone_number[2:]
-    global admin_object
-    bot.send_message(str(admin_object.get_chat_id()),  text="User request recieved to become expert from:\n\nName : " + name + "\nPhone number : " + phone_number + "\n\n for approving request please click - /accept_expert_request")
-    logger.info(str(chat_id) + " - saving request for expert in file")
+            if data[0]["approved_or_not"] is True:
+                return True
 
-    expert_requests.append(chat_id)
-    records_updater("Resources/Experts/requests.csv", str(chat_id) + "," + name + "," + phone_number)
-    return True, "Request for becoming expert is successfully sent to admin please wait for approval."
-
-def get_expert_request(): 
-    """ used by user to get request info and decide whether to accept or reject the request"""
     
-    df = pd.read_csv("Resources/Experts/requests.csv")
-    if df.shape[0] == 0:
-        return False
-    first_req = df.values[0]
-    return "Request to become expert recived from:\n\nName : <b>{}</b>\nPhone number : <b>{}</b>".format(first_req[1], first_req[2])
+###########################################
+
+def get_expert_request(chat_id):
+    """ used by user to get request info and decide whether to accept or reject the request"""
+    data = execute_query("select name, contact_number from EXPERTS_DETAIL where approved_or_not is FALSE order by expert_id limit 1;")
+
+    if len(data) == 0:
+        bot.send_message(chat_id, "No requests found")
+    else:
+        bot.send_message(chat_id, "Request to become expert received from:\n\nName : <b>{}</b>\nContact number : <b>{}</b>".format(data[0]["name"], data[0]["contact_number"]), 
+                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Accept request", callback_data=1)], [InlineKeyboardButton("Reject request", callback_data=0)]]),
+                            parse_mode=ParseMode.HTML)
+        Admin.admin_log = "a_expert"
 
 def accept_request():
-    #updating the files
-    df = pd.read_csv("Resources/Experts/requests.csv")
-    user_data = df.iloc[0]
-    df = df[1:][:]
-    df.to_csv("Resources/Experts/requests.csv", index=False)
-    records_updater("Resources/Experts/approved_experts.csv", "{},{},{}".format(str(user_data[0]), user_data[1], user_data[2]))
 
-    #updating the lists
-    expert_requests.remove(user_data[0])
-    experts_list.append(user_data[0])
+    # extracting expert 
+    data = execute_query("select expert_id, name, expert_chat_id from EXPERTS_DETAIL where approved_or_not is FALSE order by expert_id limit 1;")
 
-    #updating the logs
-    logger.info(str(user_data[0]) + " - accepting request of user as expert") 
+    execute_query("update EXPERTS_DETAIL set approved_or_not = True where expert_id = {};".format(data[0]["expert_id"]))
+    remaining_requests = execute_query("select count(expert_id) from EXPERTS_DETAIL where approved_or_not is FALSE;")[0]["count"]
 
-    #sending confirmation message to the user of request approval
-    bot.send_message(str(user_data[0]), "🥳🥳 Congratulations, admin accepted your request as an expert.")
-    return "Successfully accepted the request of {} as our expert.\n\nRemaining experts request are {}.\n\n<b>Please use /accept_expert_request to accept them.</b>".format(user_data[1], str(len(expert_requests)))
+    # Sending message to admin 
+    Admin.send_message_to_admin("Successfully accepted the request of {} as our expert.\n\nRemaining experts request are {}.\n\n<b>Please use /accept_expert_request to accept them.</b>".format(data[0]["name"], remaining_requests))
 
+    # ending message to user who is accepted as admin
+    bot.send_message(int(data[0]["expert_chat_id"]), "🥳🥳 Congratulations, admin accepted your request as an expert.")
+    
+    logger.info(" Expert request accepted by ADMIN")
 
 def reject_request():
-    #updating the file(deleting the request data from requests.csv)
-    df = pd.read_csv("Resources/Experts/requests.csv")
-    user_data = df.iloc[0]
-    df = df[1:][:]
-    df.to_csv("Resources/Experts/requests.csv", index=False)
+
+    # extracting expert data
+    data = execute_query("select expert_id, name, expert_chat_id from EXPERTS_DETAIL where approved_or_not is FALSE order by expert_id limit 1;")
+
+    execute_query("delete from EXPERTS_DETAIL where expert_id = {};".format(data[0]["expert_id"]))
+    remaining_requests = execute_query("select count(expert_id) from EXPERTS_DETAIL where approved_or_not is FALSE;")[0]["count"]
+
+    # Sending message to admin 
+    Admin.send_message_to_admin("Successfully rejected the request of {} as our expert.\n\nRemaining experts request are {}.\nPlease use /accept_expert_request to accept them.".format(data[0]["name"], remaining_requests))
+
+    # ending message to user who is accepted as admin
+    bot.send_message(int(data[0]["expert_chat_id"]), "Sorry, but admin rejected your request for becoming an expert.")
     
-    #updating the lists
-    expert_requests.remove(user_data[0])
-
-    #updating the logs
-    logger.info(str(user_data[0]) + " - rejecting request of user as expert") 
-
-    #sending confirmation message to the user of request approval
-    bot.send_message(str(user_data[0]), "Sorry, but admin rejected your request for becoming an expert.")
-    return "Successfully rejected the request of {} as our expert.\n\nRemaining experts request are {}.\nPlease use /accept_expert_request to accept them.".format(user_data[1], str(len(expert_requests)))
-
+    logger.info(" Expert request rejected by ADMIN")
 
 ############  Functions to remove expert  ##################
 
 def get_expert_for_removing():
     keyboard = []
-    df_experts = pd.read_csv("Resources/Experts/approved_experts.csv")
-    experts_array = df_experts.values
+    data = execute_query("select name, contact_number, expert_id from EXPERTS_DETAIL where approved_or_not is TRUE;")
 
-    if experts_array.shape[0] == 0:
-        return "<b>Sorry, there are no experts registered.</b>", None
+    if len(data) == 0:
+        Admin.send_message_to_admin("<b>Sorry, there are no experts registered.</b>")
+        return 
     
-    idx = 0
     
-    for user_data in experts_array:
-        keyboard.append([InlineKeyboardButton("{} - {}".format(user_data[1], user_data[2]), callback_data=idx)])
-        idx += 1
-    return "<b>Following is the list of experts with there phone number.</b>", keyboard
+    for row in data:
+        keyboard.append([InlineKeyboardButton("{} - {}".format(row["name"], row["contact_number"]), callback_data=int(row["expert_id"]))])
+        
+    # Adding addition keyboard button for terminating removing of the user
+    keyboard.append([InlineKeyboardButton("Don't want to remove", callback_data=0)])
+
+    Admin.send_message_to_admin("<b>Following is the list of experts with there phone number.</b>\nPlease select the expert you want to remove", keyboard=keyboard)
 
 
-def delete_expert_acc(idx):
-    # Removing the data from approved_experts.csv file
-    df_experts = pd.read_csv("Resources/Experts/approved_experts.csv")
-    user_data = df_experts.iloc[idx]
-    experts_array = df_experts.values
-    experts_array = np.delete(experts_array, idx, axis=0)
+def delete_expert(expert_id):
 
-    new_df = pd.DataFrame(experts_array)
-    new_df.columns = ["chat_id", "username", "data"]
+    # Checking if admin don't want to remove any user by clicking "Don't want to remove" button custom keyboard
+    if expert_id == 0: # zero expert id is not possible it is just used for idenfying termination of the task
+        Admin.send_message_to_admin(message["admin_help"])
+        return
+
+    # Sending message to the user of removing him/her as expert 
+    data = execute_query("select expert_chat_id, name from EXPERTS_DETAIL where expert_id = {};".format(expert_id))
+    bot.send_message(int(data[0]['expert_chat_id']), "Sorry, but admin removed you as an expert.")
+
+    # Removing the expert's data from database
+    execute_query("delete from EXPERTS_DETAIL where expert_id = {}".format(expert_id))
+
+    # Updating the logs
+    logger.info(" - ADMIN removed expert / deleting expert account") 
     
-    new_df.to_csv("Resources/Experts/approved_experts.csv", index=False)
-
-    #updating the list
-    experts_list.remove(user_data[0])
-
-    #updating the logs
-    logger.info(str(user_data[0]) + " - removing expert / deleting expert account") 
-    
-    #sending message to the user of removing him/her as expert
-    bot.send_message(str(user_data[0]), "Sorry, but admin removed you as an expert.")
-    return "Successfully removed {} as our expert.\n\n<b>For removing more expert click - /remove_expert</b>".format(user_data[1])
+    # Success message to admin
+    Admin.send_message_to_admin("Successfully removed {} as our expert.\n\n<b>For removing more expert click - /remove_expert</b>".format(data[0]["name"]))
 
 
 ############  Functions to process queriers/doubts asked by user ##################
