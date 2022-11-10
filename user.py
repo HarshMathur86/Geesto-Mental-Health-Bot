@@ -4,6 +4,8 @@ import pandas as pd
 import random
 from telegram import InlineKeyboardButton
 
+from database import execute_query
+
 # Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
@@ -243,18 +245,11 @@ inline_keyboards = {
 }
 
 def update_chat_id(chat_id):
-    try:
-        with open("chat_id.csv", "a") as f:
-            df = pd.read_csv("chat_id.csv")
-            if chat_id in np.array(df.chat_id):
-                return
-            else:    
-                f.write(str(chat_id) + "\n")
-                logger.info(str(chat_id) + " - New user arrived")
-    except:
-        with open("chat_id.csv", "w") as f:
-            f.write("chat_id\n")
-            f.write(str(chat_id) + "\n") 
+    data = execute_query("select * from ARRIVED_USERS where chat_id={};".format(chat_id))
+    if len(data) > 0:
+        return
+    data = execute_query("insert into ARRIVED_USERS values({});".format(chat_id))
+    logger.info("{} - new user arrived".format(chat_id))
 
 logs = {}
 # Structure of logs -->  logs["chat_id"] = "label"
@@ -548,7 +543,12 @@ def doubt_issue(chat_id, username, user_reply):
     label = logs[chat_id]
     user_reply = user_reply.replace("\n", " ")
     user_reply = user_reply.replace(",", " ")
-    records_updater("Resources/Records/" + label + "s.csv", str(chat_id) + "," + username + "," + user_reply)
+    if label=='issue': 
+        # For the technical issues reported in the bot by users 
+        execute_query("insert into TECHNICAL_ISSUES_REPORTED values({}, '{}')".format(chat_id, user_reply))
+    else:
+        # For the medical(mental health related doubts) reported in the bot by users 
+        records_updater("Resources/Records/" + label + "s.csv", str(chat_id) + "," + username + "," + user_reply)
     
     logger.info(str(chat_id) + " - {} file updated".format(logs[chat_id]))
 
