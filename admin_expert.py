@@ -6,6 +6,8 @@ import numpy as np
 
 from user import records_updater
 
+from database import execute_query
+
 # Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
@@ -13,8 +15,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# structure of admin_object dict --> admin_object = {"chat_id_of_admin": <obj of "admin" class> }   
-admin_object = {}
 
 #Initialising experts list containg chat_id of experts
 try:
@@ -38,44 +38,82 @@ except:
 #Initialising query_recipient_data[chat_id of expert answering the query] = chat_id of the user who asked the query
 query_recipient_data = {}
 
-bot = Bot(token="1732516218:AAHFSWoMwJ35ZcemIRZDgYlvU-8r5oHC8EM")
 
+############## Admin Class #####################
 
-
-class admin():
-    admin_created = False
-    chat_id = None
+class Admin():
+    admin_exists = False
     admin_log = None
     
-    def __init__(self, chat_id, security_key):
-        if admin.admin_created == False and security_key == "?WN34Az8p^wRURc5-k3!":
-            self.admin_chat_id = chat_id
-            admin.chat_id = chat_id
-            admin.admin_created = True
-            admin.admin_log = None
+    def __init__(self):
+        self.admin_chat_id = None
+        self.security_key = "SAMPLE"
 
-    def check_chat_id(self, chat_id):
+        # Loading 
+        data = execute_query("select chat_id from ADMIN;")
+        if len(data) > 0:
+            self.admin_chat_id = data[0]["chat_id"]
+            Admin.admin_exists = True
+            logger.info(" Admin object initialized")
+        else:
+            logger.info(" Admin doesn't exist")
+
+        
+    def admin_login(self, chat_id, security_key):
+        if Admin.admin_exists is False:
+            # Login
+            if security_key == self.security_key:
+                execute_query("insert into ADMIN values({});".format(chat_id))
+                self.admin_chat_id = chat_id
+                Admin.admin_exists = True
+                return True, "Successfully logged in as admin."
+            else:
+                return False, "Unsuccessful login, security key is wrong please retry."
+
+    
+    def admin_logout(self, chat_id):
+        # Deleting the admin's data from the database
+        execute_query("delete from ADMIN where chat_id = {}".format(chat_id))
+
+        self.admin_chat_id = None
+        self.admin_exists = False
+        logger.info(" ADMIN LOGGED OUT")
+
+    def check_chat_id(self, chat_id): # REJECTED
+        print("CHECK - called")
         return self.admin_chat_id == chat_id
 
-    def check_security_key(self, key):
-        return "?WN34Az8p^wRURc5-k3!" == key
+    def is_user_admin(self, chat_id):
+        data = execute_query("select chat_id from ADMIN;")
+
+        try:
+            if chat_id == int(data[0]["chat_id"]):
+                return True
+            else:
+                return False
+        except:
+            # this is required when admin is not logged in and initiates admin_logout command
+            return False
+
+    def get_chat_id(self):
+        return self.admin_chat_id
+
+        
+#################################################
+############   Initializing admin object    ##################
+try:
+    admin_object = Admin()
+except:
+    admin_object = None
+###############################################################
 
 
-def validate_admin(chat_id, security_key):
 
-    logger.info(" validating admin login credentials")
 
-    if admin.admin_created == False and security_key == "?WN34Az8p^wRURc5-k3!":
-        return True, "Successfully logged in as admin."
 
-    elif admin.admin_created == True and security_key == "?WN34Az8p^wRURc5-k3!":
-        if(admin.chat_id == chat_id):
-            return False, "You is already logged in as admin."
-        return False, "Unsuccessful login, admin already exists."
-    
-    elif security_key != "?WN34Az8p^wRURc5-k3!":
-        return False, "Unsuccessful login, security key is wrong please retry."
-
+class Expert():
+    def __init__(self):
+        pass
 
 
 ############  Functions to process user request to become expert ################## 
@@ -87,8 +125,8 @@ def save_expert_request(chat_id, name, phone_number):
             phone_number = phone_number[3:]
         else:
             phone_number = phone_number[2:]
-    
-    bot.send_message(str(admin.chat_id),  text="User request recieved to become expert from:\n\nName : " + name + "\nPhone number : " + phone_number + "\n\n for approving request please click - /accept_expert_request")
+    global admin_object
+    bot.send_message(str(admin_object.get_chat_id()),  text="User request recieved to become expert from:\n\nName : " + name + "\nPhone number : " + phone_number + "\n\n for approving request please click - /accept_expert_request")
     logger.info(str(chat_id) + " - saving request for expert in file")
 
     expert_requests.append(chat_id)
