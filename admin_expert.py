@@ -4,7 +4,11 @@ from telegram import Bot, ParseMode, InlineKeyboardMarkup
 import pandas as pd
 import numpy as np
 
-from user import records_updater, message
+import schedule
+import time
+import threading
+
+from user import records_updater, message, update_messages_logs
 
 from database import execute_query
 
@@ -14,6 +18,34 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+#################### MULTI THREADING - Creating seprate thread for scheduling function ###################
+
+#dummy scheduled function()
+def dummy_fun():
+    return
+schedule.every(24).hours.do(dummy_fun)
+
+def scheduled_functions_handler():
+    while len(schedule.get_jobs())>0:
+        
+        time.sleep(1)
+        try:
+            schedule.run_pending()
+        except Exception as exp:
+            logger.info("exception occured - ".format(exp))
+
+    # Killing the thread intentionally
+    try: 
+        raise BaseException("\n\nKilling the window closing thread")
+    except:
+        pass 
+
+scheduler_thread = threading.Thread(target=scheduled_functions_handler)
+scheduler_thread.setName("SchedulerThread")
+scheduler_thread.start()
+logger.info("SchedulerThread initiated")
+
 
 
 #Initialising experts list containg chat_id of experts
@@ -148,6 +180,7 @@ class Expert(): # specifically for processing user's request to become an expert
 
         bot.send_message(self.chat_id, "Request for becoming expert is successfully received please wait for approval.")
 
+    # Class Methods
 
     def is_expert(chat_id, applied = False):
         """This function will check whether a user has already applied for expert role or is an expert"""
@@ -163,6 +196,8 @@ class Expert(): # specifically for processing user's request to become an expert
             if data[0]["approved_or_not"] is True:
                 return True
 
+    def get_expert_id(chat_id):
+        return execute_query("select expert_id from EXPERTS_DETAIL where expert_chat_id = {}".format(chat_id))[0]["expert_id"]
     
 ###########################################
 
@@ -253,60 +288,87 @@ def delete_expert(expert_id):
 
 ############  Functions to process queriers/doubts asked by user ##################
 
-def get_queries():
-    df_query = pd.read_csv("Resources/Records/doubts.csv")
+def unanswered_query_revoker(chat_id, question_id):
+    print("REvoker - ",threading.current_thread())
+    print(schedule.get_jobs())
+    # Condition of unanswered question by mistake and reserved
+    data = execute_query("select que_id from PATIENTS_QUERY where answer is NULL and que_id = {};".format(question_id))
+    print("data from revoker ---> ", data)
+    if len(data) > 0:
+        # Que asigned to an expert exists and needs to be revoked(by putting answered_by_expert_id again to NULL)
+        execute_query("update PATIENTS_QUERY set answered_by_expert_id = NULL where que_id = {};".format(question_id))
+        bot.send_message(chat_id, "Answering window for previous question timed out. Please click - /answer_query if want to restart.")
+        update_messages_logs(chat_id, 'z')
 
-    if df_query.shape[0] == 0:
-        return "No doubts asked", None
+    return schedule.CancelJob
 
-    questions = df_query.data.values
+def get_queries(chat_id):
 
-    keyboard = []
-    idx = 0
-    for que in questions:
-        keyboard.append([InlineKeyboardButton(que, callback_data=idx)])
-        idx += 1
-
-    return "Following is the list of doubts asked", keyboard 
-
-def process_query(expert_chat_id, index):
-    # Removing the data from doubts.csv file
-    df_query = pd.read_csv("Resources/Records/doubts.csv")
-    query_data = df_query.iloc[index]
-    queries_array = df_query.values
-    queries_array = np.delete(queries_array, index, axis=0)
-
-    new_df = pd.DataFrame(queries_array)
-    new_df.columns = ["chat_id", "username", "data"]
-    new_df.to_csv("Resources/Records/doubts.csv", index=False)
-
-    #Saving the data in resolved_doubts.csv
-    records_updater("Resources/Records/resolved_doubts.csv", "{},{},{}".format(str(query_data[0]), query_data[1], query_data[2]))
-        
-    # storing the reciepient chat_id
-    query_recipient_data[expert_chat_id] = query_data
+    # Extracting query from database on FCFS basis using question id number
+    data = execute_query("select que_id, que_asked from PATIENTS_QUERY where answered_or_not is FALSE and answered_by_expert_id is NULL order by que_id limit 1;") 
+    print("data Fresh ---> ", data, type(data))
     
-    return "Please send the answer of the following question:\n\n<b>{}</b>".format(query_data[2])
+    
+    if len(data) == 0:
+        bot.send_message(chat_id, "No doubts asked recently.")
+        return
+
+    expert_id = Expert.get_expert_id(chat_id)
+
+    # Reserving the que for this particular expert to answer
+    execute_query("update PATIENTS_QUERY set answered_by_expert_id = {} where que_id = {}".format(expert_id, data[0]["que_id"]))
+
+    # Sending the question to the expert
+    bot.send_message(chat_id, "<b>Following question is asked by a user/patient:-</b>\n\n{}".format(data[0]["que_asked"]), parse_mode = ParseMode.HTML)
+    bot.send_message(chat_id, "Please write the suggestion/answer of user's query.")
+
+    # Scheduling the revoker function and Generating the thread
+    schedule.every(180).seconds.do(unanswered_query_revoker, chat_id, data[0]["que_id"])
+    
+
+     
 
 def send_query_answer(expert_chat_id, answer):
-    bot.send_message(str(query_recipient_data[expert_chat_id][0]), "🤩🤩Congratulations, our expert answered your query: \n\nQuestion you asked \n👉 {}\n\nAnswer from expert\n👉 ".format(query_recipient_data[expert_chat_id][2]) + answer)
-    del query_recipient_data[expert_chat_id]
+
+    # Extracting the query which is reserved for this particular expert
+    expert_id = Expert.get_expert_id(expert_chat_id)
+    data = execute_query("select patient_chat_id, que_id, que_asked from PATIENTS_QUERY where answered_by_expert_id = {} and answered_or_not is FALSE order by que_id limit 1;".format(expert_id))
+
+    print(data)
+
+    # Saving the data to database
+    execute_query("update PATIENTS_QUERY set answered_or_not = TRUE, answer = '{}' where que_id = {}".format(answer, data[0]["que_id"]))
+
+    # Sending the answer to the user/patient who asked the question
+    bot.send_message(int(data[0]["patient_chat_id"]), "Congratulations, our expert answered your query: \n\n<b>Question you asked</b> \n👉 <i>{}</i>\n\n<b>Answer from expert</b>\n👉 <i>{}</i>".format(data[0]["que_asked"], answer))
 
     #updating the logs
     logger.info(str(expert_chat_id) + " - sending query answer") 
 
-    return "Answer send successfully to user."   
+    bot.send_message(expert_chat_id, "Answer send successfully to user.")   
+
 
 ############ Function for announcement #############################
-def announcement(message_to_announce):
-    chat_ids_df = pd.read_csv("chat_id.csv")
-    chat_ids = np.array(chat_ids_df.chat_id)
-    
-    for chat_id in chat_ids:
+def announcement(message_to_announce, sender_chat_id, image=None):
 
-        bot.send_message(str(chat_id), text=message_to_announce)
+    logger.info("sending announcements")
 
-        logger.info(str(chat_id) + " - annoucement sent")
+    data = execute_query("select * from ARRIVED_USERS where chat_id!={};".format(sender_chat_id))
+
+    if image is None:
+        for row in data:
+            try:
+                bot.send_message(int(row["chat_id"]), message_to_announce)
+                logger.info(str(row["chat_id"]) + " - annoucement sent")
+            except:
+                pass
+    else:
+        for row in data:
+            try:
+                bot.send_photo(int(row["chat_id"]), image, caption=message_to_announce)
+                logger.info(str(row["chat_id"]) + " - annoucement sent")
+            except Exception as e:
+                pass
         
 ############ Function for Statistics generation ###############################
 def get_statistics():
