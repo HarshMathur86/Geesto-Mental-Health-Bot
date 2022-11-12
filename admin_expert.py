@@ -1,16 +1,10 @@
 import logging
 from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
-from telegram import Bot, ParseMode, InlineKeyboardMarkup
+from telegram import Bot
 import pandas as pd
 import numpy as np
 
-import schedule
-import time
-import threading
-
-from user import records_updater, message, update_messages_logs
-
-from database import execute_query, query_result_file_extractor
+from user import records_updater
 
 # Enable logging
 logging.basicConfig(
@@ -19,40 +13,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-#################### MULTI THREADING - Creating seprate thread for scheduling function ###################
-
-#dummy scheduled function()
-def dummy_fun():
-    return
-schedule.every(24).hours.do(dummy_fun)
-
-def scheduled_functions_handler():
-    while len(schedule.get_jobs())>0:
-        
-        time.sleep(1)
-        try:
-            schedule.run_pending()
-        except Exception as exp:
-            logger.info("exception occured - ".format(exp))
-
-    # Killing the thread intentionally
-    try: 
-        raise BaseException("\n\nKilling the window closing thread")
-    except:
-        pass 
-
-scheduler_thread = threading.Thread(target=scheduled_functions_handler)
-scheduler_thread.setName("SchedulerThread")
-scheduler_thread.start()
-logger.info("SchedulerThread initiated")
-
-
+# structure of admin_object dict --> admin_object = {"chat_id_of_admin": <obj of "admin" class> }   
+admin_object = {}
 
 #Initialising experts list containg chat_id of experts
-
-expert_objects = {}
-
-
 try:
     df = pd.read_csv("Resources/Experts/approved_experts.csv")
     experts_list  = df.chat_id.values
@@ -74,300 +38,207 @@ except:
 #Initialising query_recipient_data[chat_id of expert answering the query] = chat_id of the user who asked the query
 query_recipient_data = {}
 
-bot = Bot(token="SAMPLE")
+bot = Bot(token="1732516218:AAHFSWoMwJ35ZcemIRZDgYlvU-8r5oHC8EM")
 
-############## Admin Class #####################
 
-class Admin():
-    admin_exists = False
+
+class admin():
+    admin_created = False
+    chat_id = None
     admin_log = None
     
-    def __init__(self):
-        self.admin_chat_id = None
-        self.security_key = "SAMPLE"
+    def __init__(self, chat_id, security_key):
+        if admin.admin_created == False and security_key == "?WN34Az8p^wRURc5-k3!":
+            self.admin_chat_id = chat_id
+            admin.chat_id = chat_id
+            admin.admin_created = True
+            admin.admin_log = None
 
-        # Loading 
-        data = execute_query("select chat_id from ADMIN;")
-        if len(data) > 0:
-            self.admin_chat_id = data[0]["chat_id"]
-            Admin.admin_exists = True
-            logger.info(" Admin object initialized")
-        else:
-            logger.info(" Admin doesn't exist")
-
-        
-    def admin_login(self, chat_id, security_key):
-        if Admin.admin_exists is False:
-            # Login
-            if security_key == self.security_key:
-                execute_query("insert into ADMIN values({});".format(chat_id))
-                self.admin_chat_id = chat_id
-                Admin.admin_exists = True
-                return True, "Successfully logged in as admin."
-            else:
-                return False, "Unsuccessful login, security key is wrong please retry."
-
-    
-    def admin_logout(self, chat_id):
-        # Deleting the admin's data from the database
-        execute_query("delete from ADMIN where chat_id = {}".format(chat_id))
-
-        self.admin_chat_id = None
-        Admin.admin_exists = False
-        logger.info(" ADMIN LOGGED OUT")
-
-    def check_chat_id(self, chat_id): # REJECTED
-        print("CHECK - called")
+    def check_chat_id(self, chat_id):
         return self.admin_chat_id == chat_id
 
-    def is_user_admin(self, chat_id):
+    def check_security_key(self, key):
+        return "?WN34Az8p^wRURc5-k3!" == key
 
-        try:
-            if chat_id == self.admin_chat_id:
-                return True
-            else:
-                return False
-        except:
-            # this is required when admin is not logged in and initiates admin_logout command
-            return False
 
-    def get_chat_id(self):
-        return self.admin_chat_id
-        
+def validate_admin(chat_id, security_key):
 
-    def send_message_to_admin(message, keyboard = None):
-        if Admin.admin_exists:
-            data = execute_query("select chat_id from admin;")
-            if keyboard is None:
-                bot.send_message(int(data[0]["chat_id"]), message, parse_mode=ParseMode.HTML)
-            else:
-                bot.send_message(int(data[0]["chat_id"]), message, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-        
-        
-#################################################
+    logger.info(" validating admin login credentials")
 
-class Expert(): # specifically for processing user's request to become an expert 
-    def __init__(self, chat_id, contact_number):
-        self.chat_id = chat_id
-        self.contact_number = None
-        self.name = None
+    if admin.admin_created == False and security_key == "?WN34Az8p^wRURc5-k3!":
+        return True, "Successfully logged in as admin."
 
-        print(type(contact_number))
-        if len(str(contact_number)) > 10:
-            if contact_number.startswith("+"):
-                self.contact_number = contact_number[3:]
-            else:
-                self.contact_number = contact_number[2:]
-
-        print(self.contact_number)
-        bot.send_message(chat_id, "Please send your name.")
-
-    def add_name(self, name):
-        name.replace('\n', ' ')
-        self.name = name
-
-    def send_request(self):
-        # Generating expert id
-        data = execute_query("select max(expert_id) from experts_detail;")
-        try:
-            id = data[0]["max"] + 1
-        except:
-            id = 1
-            
-        execute_query("insert into EXPERTS_DETAIL values({}, {}, '{}', {}, FALSE);".format(
-                self.chat_id, id, self.name, self.contact_number
-            ))
-
-        bot.send_message(self.chat_id, "Request for becoming expert is successfully received please wait for approval.")
-
-    # Class Methods
-
-    def is_expert(chat_id, applied = False):
-        """This function will check whether a user has already applied for expert role or is an expert"""
-        data = execute_query("select approved_or_not from EXPERTS_DETAIL where expert_chat_id = {}".format(chat_id))
-
-        if len(data) == 0:
-            return False
-        elif applied:
-            if data[0]["approved_or_not"] is False:
-                # Used when user try to apply for expert role more than one 
-                return True
-        else:
-            if data[0]["approved_or_not"] is True:
-                return True
-
-    def get_expert_id(chat_id):
-        return execute_query("select expert_id from EXPERTS_DETAIL where expert_chat_id = {}".format(chat_id))[0]["expert_id"]
+    elif admin.admin_created == True and security_key == "?WN34Az8p^wRURc5-k3!":
+        if(admin.chat_id == chat_id):
+            return False, "You is already logged in as admin."
+        return False, "Unsuccessful login, admin already exists."
     
-###########################################
+    elif security_key != "?WN34Az8p^wRURc5-k3!":
+        return False, "Unsuccessful login, security key is wrong please retry."
 
-def get_expert_request(chat_id):
+
+
+############  Functions to process user request to become expert ################## 
+
+def save_expert_request(chat_id, name, phone_number):
+    
+    if len(str(phone_number)) > 10:
+        if phone_number.startswith("+"):
+            phone_number = phone_number[3:]
+        else:
+            phone_number = phone_number[2:]
+    
+    bot.send_message(str(admin.chat_id),  text="User request recieved to become expert from:\n\nName : " + name + "\nPhone number : " + phone_number + "\n\n for approving request please click - /accept_expert_request")
+    logger.info(str(chat_id) + " - saving request for expert in file")
+
+    expert_requests.append(chat_id)
+    records_updater("Resources/Experts/requests.csv", str(chat_id) + "," + name + "," + phone_number)
+    return True, "Request for becoming expert is successfully sent to admin please wait for approval."
+
+def get_expert_request(): 
     """ used by user to get request info and decide whether to accept or reject the request"""
-    data = execute_query("select name, contact_number from EXPERTS_DETAIL where approved_or_not is FALSE order by expert_id limit 1;")
-
-    if len(data) == 0:
-        bot.send_message(chat_id, "No requests found")
-    else:
-        bot.send_message(chat_id, "Request to become expert received from:\n\nName : <b>{}</b>\nContact number : <b>{}</b>".format(data[0]["name"], data[0]["contact_number"]), 
-                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Accept request", callback_data=1)], [InlineKeyboardButton("Reject request", callback_data=0)]]),
-                            parse_mode=ParseMode.HTML)
-        Admin.admin_log = "a_expert"
+    
+    df = pd.read_csv("Resources/Experts/requests.csv")
+    if df.shape[0] == 0:
+        return False
+    first_req = df.values[0]
+    return "Request to become expert recived from:\n\nName : <b>{}</b>\nPhone number : <b>{}</b>".format(first_req[1], first_req[2])
 
 def accept_request():
+    #updating the files
+    df = pd.read_csv("Resources/Experts/requests.csv")
+    user_data = df.iloc[0]
+    df = df[1:][:]
+    df.to_csv("Resources/Experts/requests.csv", index=False)
+    records_updater("Resources/Experts/approved_experts.csv", "{},{},{}".format(str(user_data[0]), user_data[1], user_data[2]))
 
-    # extracting expert 
-    data = execute_query("select expert_id, name, expert_chat_id from EXPERTS_DETAIL where approved_or_not is FALSE order by expert_id limit 1;")
+    #updating the lists
+    expert_requests.remove(user_data[0])
+    experts_list.append(user_data[0])
 
-    execute_query("update EXPERTS_DETAIL set approved_or_not = True where expert_id = {};".format(data[0]["expert_id"]))
-    remaining_requests = execute_query("select count(expert_id) from EXPERTS_DETAIL where approved_or_not is FALSE;")[0]["count"]
+    #updating the logs
+    logger.info(str(user_data[0]) + " - accepting request of user as expert") 
 
-    # Sending message to admin 
-    Admin.send_message_to_admin("Successfully accepted the request of {} as our expert.\n\nRemaining experts request are {}.\n\n<b>Please use /accept_expert_request to accept them.</b>".format(data[0]["name"], remaining_requests))
+    #sending confirmation message to the user of request approval
+    bot.send_message(str(user_data[0]), "🥳🥳 Congratulations, admin accepted your request as an expert.")
+    return "Successfully accepted the request of {} as our expert.\n\nRemaining experts request are {}.\n\n<b>Please use /accept_expert_request to accept them.</b>".format(user_data[1], str(len(expert_requests)))
 
-    # ending message to user who is accepted as admin
-    bot.send_message(int(data[0]["expert_chat_id"]), "🥳🥳 Congratulations, admin accepted your request as an expert.")
-    
-    logger.info(" Expert request accepted by ADMIN")
 
 def reject_request():
-
-    # extracting expert data
-    data = execute_query("select expert_id, name, expert_chat_id from EXPERTS_DETAIL where approved_or_not is FALSE order by expert_id limit 1;")
-
-    execute_query("delete from EXPERTS_DETAIL where expert_id = {};".format(data[0]["expert_id"]))
-    remaining_requests = execute_query("select count(expert_id) from EXPERTS_DETAIL where approved_or_not is FALSE;")[0]["count"]
-
-    # Sending message to admin 
-    Admin.send_message_to_admin("Successfully rejected the request of {} as our expert.\n\nRemaining experts request are {}.\nPlease use /accept_expert_request to accept them.".format(data[0]["name"], remaining_requests))
-
-    # ending message to user who is accepted as admin
-    bot.send_message(int(data[0]["expert_chat_id"]), "Sorry, but admin rejected your request for becoming an expert.")
+    #updating the file(deleting the request data from requests.csv)
+    df = pd.read_csv("Resources/Experts/requests.csv")
+    user_data = df.iloc[0]
+    df = df[1:][:]
+    df.to_csv("Resources/Experts/requests.csv", index=False)
     
-    logger.info(" Expert request rejected by ADMIN")
+    #updating the lists
+    expert_requests.remove(user_data[0])
+
+    #updating the logs
+    logger.info(str(user_data[0]) + " - rejecting request of user as expert") 
+
+    #sending confirmation message to the user of request approval
+    bot.send_message(str(user_data[0]), "Sorry, but admin rejected your request for becoming an expert.")
+    return "Successfully rejected the request of {} as our expert.\n\nRemaining experts request are {}.\nPlease use /accept_expert_request to accept them.".format(user_data[1], str(len(expert_requests)))
+
 
 ############  Functions to remove expert  ##################
 
 def get_expert_for_removing():
     keyboard = []
-    data = execute_query("select name, contact_number, expert_id from EXPERTS_DETAIL where approved_or_not is TRUE and expert_id != 1;")
+    df_experts = pd.read_csv("Resources/Experts/approved_experts.csv")
+    experts_array = df_experts.values
 
-    if len(data) == 0:
-        Admin.send_message_to_admin("<b>Sorry, there are no experts registered.</b>")
-        return 
+    if experts_array.shape[0] == 0:
+        return "<b>Sorry, there are no experts registered.</b>", None
     
+    idx = 0
     
-    for row in data:
-        keyboard.append([InlineKeyboardButton("{} - {}".format(row["name"], row["contact_number"]), callback_data=int(row["expert_id"]))])
-        
-    # Adding addition keyboard button for terminating removing of the user
-    keyboard.append([InlineKeyboardButton("Don't want to remove", callback_data=0)])
-    print(keyboard)
-    Admin.send_message_to_admin("<b>Following is the list of experts with there phone number.</b>\nPlease select the expert you want to remove", keyboard=keyboard)
+    for user_data in experts_array:
+        keyboard.append([InlineKeyboardButton("{} - {}".format(user_data[1], user_data[2]), callback_data=idx)])
+        idx += 1
+    return "<b>Following is the list of experts with there phone number.</b>", keyboard
 
 
-def delete_expert(expert_id):
+def delete_expert_acc(idx):
+    # Removing the data from approved_experts.csv file
+    df_experts = pd.read_csv("Resources/Experts/approved_experts.csv")
+    user_data = df_experts.iloc[idx]
+    experts_array = df_experts.values
+    experts_array = np.delete(experts_array, idx, axis=0)
 
-    # Checking if admin don't want to remove any user by clicking "Don't want to remove" button custom keyboard
-    if expert_id == 0: # zero expert id is not possible it is just used for idenfying termination of the task
-        Admin.send_message_to_admin(message["admin_help"])
-        return
-
-    # Sending message to the user of removing him/her as expert 
-    data = execute_query("select expert_chat_id, name from EXPERTS_DETAIL where expert_id = {};".format(expert_id))
-    bot.send_message(int(data[0]['expert_chat_id']), "Sorry, but admin removed you as an expert.")
-
-    # Removing the expert's data from database
-    execute_query("delete from EXPERTS_DETAIL where expert_id = {}".format(expert_id))
-
-    # Updating the logs
-    logger.info(" - ADMIN removed expert / deleting expert account") 
+    new_df = pd.DataFrame(experts_array)
+    new_df.columns = ["chat_id", "username", "data"]
     
-    # Success message to admin
-    Admin.send_message_to_admin("Successfully removed {} as our expert.\n\n<b>For removing more expert click - /remove_expert</b>".format(data[0]["name"]))
+    new_df.to_csv("Resources/Experts/approved_experts.csv", index=False)
+
+    #updating the list
+    experts_list.remove(user_data[0])
+
+    #updating the logs
+    logger.info(str(user_data[0]) + " - removing expert / deleting expert account") 
+    
+    #sending message to the user of removing him/her as expert
+    bot.send_message(str(user_data[0]), "Sorry, but admin removed you as an expert.")
+    return "Successfully removed {} as our expert.\n\n<b>For removing more expert click - /remove_expert</b>".format(user_data[1])
 
 
 ############  Functions to process queriers/doubts asked by user ##################
 
-def unanswered_query_revoker(chat_id, question_id):
-    print("REvoker - ",threading.current_thread())
-    print(schedule.get_jobs())
-    # Condition of unanswered question by mistake and reserved
-    data = execute_query("select que_id from PATIENTS_QUERY where answer is NULL and que_id = {};".format(question_id))
-    print("data from revoker ---> ", data)
-    if len(data) > 0:
-        # Que asigned to an expert exists and needs to be revoked(by putting answered_by_expert_id again to NULL)
-        execute_query("update PATIENTS_QUERY set answered_by_expert_id = NULL where que_id = {};".format(question_id))
-        bot.send_message(chat_id, "Answering window for previous question timed out. Please click - /answer_query if want to restart.")
-        update_messages_logs(chat_id, 'z')
+def get_queries():
+    df_query = pd.read_csv("Resources/Records/doubts.csv")
 
-    return schedule.CancelJob
+    if df_query.shape[0] == 0:
+        return "No doubts asked", None
 
+    questions = df_query.data.values
 
-def get_queries(chat_id):
+    keyboard = []
+    idx = 0
+    for que in questions:
+        keyboard.append([InlineKeyboardButton(que, callback_data=idx)])
+        idx += 1
 
-    # Extracting query from database on FCFS basis using question id number
-    data = execute_query("select que_id, que_asked from PATIENTS_QUERY where answered_or_not is FALSE and answered_by_expert_id is NULL order by que_id limit 1;") 
-    print("data Fresh ---> ", data, type(data))
+    return "Following is the list of doubts asked", keyboard 
+
+def process_query(expert_chat_id, index):
+    # Removing the data from doubts.csv file
+    df_query = pd.read_csv("Resources/Records/doubts.csv")
+    query_data = df_query.iloc[index]
+    queries_array = df_query.values
+    queries_array = np.delete(queries_array, index, axis=0)
+
+    new_df = pd.DataFrame(queries_array)
+    new_df.columns = ["chat_id", "username", "data"]
+    new_df.to_csv("Resources/Records/doubts.csv", index=False)
+
+    #Saving the data in resolved_doubts.csv
+    records_updater("Resources/Records/resolved_doubts.csv", "{},{},{}".format(str(query_data[0]), query_data[1], query_data[2]))
+        
+    # storing the reciepient chat_id
+    query_recipient_data[expert_chat_id] = query_data
     
-    
-    if len(data) == 0:
-        bot.send_message(chat_id, "No doubts asked recently.")
-        return
-
-    expert_id = Expert.get_expert_id(chat_id)
-
-    # Reserving the que for this particular expert to answer
-    execute_query("update PATIENTS_QUERY set answered_by_expert_id = {} where que_id = {}".format(expert_id, data[0]["que_id"]))
-
-    # Sending the question to the expert
-    bot.send_message(chat_id, "<b>Following question is asked by a user/patient:-</b>\n\n{}".format(data[0]["que_asked"]), parse_mode = ParseMode.HTML)
-    bot.send_message(chat_id, "Please write the suggestion/answer of user's query.")
-
-    # Scheduling the revoker function and Generating the thread
-    schedule.every(180).seconds.do(unanswered_query_revoker, chat_id, data[0]["que_id"])
-    
+    return "Please send the answer of the following question:\n\n<b>{}</b>".format(query_data[2])
 
 def send_query_answer(expert_chat_id, answer):
-
-    # Extracting the query which is reserved for this particular expert
-    expert_id = Expert.get_expert_id(expert_chat_id)
-    data = execute_query("select patient_chat_id, que_id, que_asked from PATIENTS_QUERY where answered_by_expert_id = {} and answered_or_not is FALSE order by que_id limit 1;".format(expert_id))
-
-    print(data)
-
-    # Saving the data to database
-    execute_query("update PATIENTS_QUERY set answered_or_not = TRUE, answer = '{}' where que_id = {}".format((answer.replace('\n', ' ')).replace(',', ' '), data[0]["que_id"]))
-
-    # Sending the answer to the user/patient who asked the question
-    bot.send_message(int(data[0]["patient_chat_id"]), "Congratulations, our expert answered your query: \n\n<b>Question you asked</b> \n👉 <i>{}</i>\n\n<b>Answer from expert</b>\n👉 {}".format(data[0]["que_asked"], answer), parse_mode=ParseMode.HTML)
+    bot.send_message(str(query_recipient_data[expert_chat_id][0]), "🤩🤩Congratulations, our expert answered your query: \n\nQuestion you asked \n👉 {}\n\nAnswer from expert\n👉 ".format(query_recipient_data[expert_chat_id][2]) + answer)
+    del query_recipient_data[expert_chat_id]
 
     #updating the logs
     logger.info(str(expert_chat_id) + " - sending query answer") 
 
-    bot.send_message(expert_chat_id, "Answer send successfully to user.")   
-
+    return "Answer send successfully to user."   
 
 ############ Function for announcement #############################
-def announcement(message_to_announce, sender_chat_id, image=None):
+def announcement(message_to_announce):
+    chat_ids_df = pd.read_csv("chat_id.csv")
+    chat_ids = np.array(chat_ids_df.chat_id)
+    
+    for chat_id in chat_ids:
 
-    logger.info("sending announcements")
+        bot.send_message(str(chat_id), text=message_to_announce)
 
-    data = execute_query("select * from ARRIVED_USERS where chat_id!={};".format(sender_chat_id))
-
-    if image is None:
-        for row in data:
-            try:
-                bot.send_message(int(row["chat_id"]), message_to_announce)
-                logger.info(str(row["chat_id"]) + " - annoucement sent")
-            except:
-                pass
-    else:
-        for row in data:
-            try:
-                bot.send_photo(int(row["chat_id"]), image, caption=message_to_announce)
-                logger.info(str(row["chat_id"]) + " - annoucement sent")
-            except Exception as e:
-                pass
+        logger.info(str(chat_id) + " - annoucement sent")
         
 ############ Function for Statistics generation ###############################
 def get_statistics():
@@ -403,3 +274,58 @@ def get_statistics():
     message += "Number of <i>CBT therapy</i> taken : <b>{}</b>\n".format(cbt_takers_count)
 
     return message
+    
+############ Function to generate file all_doubts.csv ################
+def generate_all_doubts():
+    #Reading the file
+    ur_df = pd.read_csv("Resources/Records/doubts.csv")
+    r_df = pd.read_csv("Resources/Records/resolved_doubts.csv")
+
+    #droping chat_id column
+    ur_df = ur_df.drop("chat_id", axis=1)
+    r_df = r_df.drop("chat_id", axis=1)
+
+    #creating numpy array of the data frames
+    r_array = np.array(r_df)
+    ur_array = np.array(ur_df)
+
+    if r_array.shape[0] != 0 and ur_array.shape[0] != 0: 
+        
+        #creating and adding column for status
+        status = np.array(["Unresolved" for i in range(ur_array.shape[0])])
+        status = status.reshape(ur_array.shape[0],-1)
+        ur_array = np.hstack((ur_array, status))
+
+        status = np.array(["Resolved" for i in range(r_array.shape[0])])
+        status = status.reshape(r_array.shape[0],-1)
+        r_array = np.hstack((r_array, status))
+
+        #adding both the array
+        all_doubts_array = np.vstack((ur_array, r_array))
+
+    elif r_array.shape[0] != 0 and ur_array.shape[0] == 0: 
+        # when unresolved array is empty then only processing all resolved doubts
+        
+        #creating and adding column for status
+        status = np.array(["Resolved" for i in range(r_array.shape[0])])
+        status = status.reshape(r_array.shape[0],-1)
+        all_doubts_array = np.hstack((r_array, status))
+
+    elif r_array.shape[0] == 0 and ur_array.shape[0] != 0: 
+        # when resolved array is empty then only processing all unresolved doubts
+        
+        #creating and adding column for status
+        status = np.array(["Unresolved" for i in range(ur_array.shape[0])])
+        status = status.reshape(ur_array.shape[0],-1)
+        all_doubts_array = np.hstack((ur_array, status))
+
+    else: # when both is empty
+        return False
+
+
+    #creating the data frame of all doubts
+    all_doubts_df = pd.DataFrame(all_doubts_array)
+    all_doubts_df.columns = ["Name of user", "Doubt asked", "Status"]
+
+    all_doubts_df.to_csv("Resources/Records/Doubts.csv", index=False)
+    return True
