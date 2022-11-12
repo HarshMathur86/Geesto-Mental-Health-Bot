@@ -10,7 +10,7 @@ import threading
 
 from user import records_updater, message, update_messages_logs
 
-from database import execute_query
+from database import execute_query, query_result_file_extractor
 
 # Enable logging
 logging.basicConfig(
@@ -249,7 +249,7 @@ def reject_request():
 
 def get_expert_for_removing():
     keyboard = []
-    data = execute_query("select name, contact_number, expert_id from EXPERTS_DETAIL where approved_or_not is TRUE;")
+    data = execute_query("select name, contact_number, expert_id from EXPERTS_DETAIL where approved_or_not is TRUE and expert_id != 1;")
 
     if len(data) == 0:
         Admin.send_message_to_admin("<b>Sorry, there are no experts registered.</b>")
@@ -261,7 +261,7 @@ def get_expert_for_removing():
         
     # Adding addition keyboard button for terminating removing of the user
     keyboard.append([InlineKeyboardButton("Don't want to remove", callback_data=0)])
-
+    print(keyboard)
     Admin.send_message_to_admin("<b>Following is the list of experts with there phone number.</b>\nPlease select the expert you want to remove", keyboard=keyboard)
 
 
@@ -302,6 +302,7 @@ def unanswered_query_revoker(chat_id, question_id):
 
     return schedule.CancelJob
 
+
 def get_queries(chat_id):
 
     # Extracting query from database on FCFS basis using question id number
@@ -326,8 +327,6 @@ def get_queries(chat_id):
     schedule.every(180).seconds.do(unanswered_query_revoker, chat_id, data[0]["que_id"])
     
 
-     
-
 def send_query_answer(expert_chat_id, answer):
 
     # Extracting the query which is reserved for this particular expert
@@ -337,10 +336,10 @@ def send_query_answer(expert_chat_id, answer):
     print(data)
 
     # Saving the data to database
-    execute_query("update PATIENTS_QUERY set answered_or_not = TRUE, answer = '{}' where que_id = {}".format(answer, data[0]["que_id"]))
+    execute_query("update PATIENTS_QUERY set answered_or_not = TRUE, answer = '{}' where que_id = {}".format((answer.replace('\n', ' ')).replace(',', ' '), data[0]["que_id"]))
 
     # Sending the answer to the user/patient who asked the question
-    bot.send_message(int(data[0]["patient_chat_id"]), "Congratulations, our expert answered your query: \n\n<b>Question you asked</b> \n👉 <i>{}</i>\n\n<b>Answer from expert</b>\n👉 <i>{}</i>".format(data[0]["que_asked"], answer))
+    bot.send_message(int(data[0]["patient_chat_id"]), "Congratulations, our expert answered your query: \n\n<b>Question you asked</b> \n👉 <i>{}</i>\n\n<b>Answer from expert</b>\n👉 {}".format(data[0]["que_asked"], answer), parse_mode=ParseMode.HTML)
 
     #updating the logs
     logger.info(str(expert_chat_id) + " - sending query answer") 
@@ -404,58 +403,3 @@ def get_statistics():
     message += "Number of <i>CBT therapy</i> taken : <b>{}</b>\n".format(cbt_takers_count)
 
     return message
-    
-############ Function to generate file all_doubts.csv ################
-def generate_all_doubts():
-    #Reading the file
-    ur_df = pd.read_csv("Resources/Records/doubts.csv")
-    r_df = pd.read_csv("Resources/Records/resolved_doubts.csv")
-
-    #droping chat_id column
-    ur_df = ur_df.drop("chat_id", axis=1)
-    r_df = r_df.drop("chat_id", axis=1)
-
-    #creating numpy array of the data frames
-    r_array = np.array(r_df)
-    ur_array = np.array(ur_df)
-
-    if r_array.shape[0] != 0 and ur_array.shape[0] != 0: 
-        
-        #creating and adding column for status
-        status = np.array(["Unresolved" for i in range(ur_array.shape[0])])
-        status = status.reshape(ur_array.shape[0],-1)
-        ur_array = np.hstack((ur_array, status))
-
-        status = np.array(["Resolved" for i in range(r_array.shape[0])])
-        status = status.reshape(r_array.shape[0],-1)
-        r_array = np.hstack((r_array, status))
-
-        #adding both the array
-        all_doubts_array = np.vstack((ur_array, r_array))
-
-    elif r_array.shape[0] != 0 and ur_array.shape[0] == 0: 
-        # when unresolved array is empty then only processing all resolved doubts
-        
-        #creating and adding column for status
-        status = np.array(["Resolved" for i in range(r_array.shape[0])])
-        status = status.reshape(r_array.shape[0],-1)
-        all_doubts_array = np.hstack((r_array, status))
-
-    elif r_array.shape[0] == 0 and ur_array.shape[0] != 0: 
-        # when resolved array is empty then only processing all unresolved doubts
-        
-        #creating and adding column for status
-        status = np.array(["Unresolved" for i in range(ur_array.shape[0])])
-        status = status.reshape(ur_array.shape[0],-1)
-        all_doubts_array = np.hstack((ur_array, status))
-
-    else: # when both is empty
-        return False
-
-
-    #creating the data frame of all doubts
-    all_doubts_df = pd.DataFrame(all_doubts_array)
-    all_doubts_df.columns = ["Name of user", "Doubt asked", "Status"]
-
-    all_doubts_df.to_csv("Resources/Records/Doubts.csv", index=False)
-    return True
