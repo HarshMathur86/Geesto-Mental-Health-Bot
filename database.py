@@ -1,3 +1,5 @@
+# Following file is for the database integration which uses postgres SQL Repository
+
 import psycopg2
 import psycopg2.extras
 import logging 
