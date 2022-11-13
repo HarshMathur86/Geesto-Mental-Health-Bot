@@ -22,7 +22,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-TOKEN = "1732516218:AAHFSWoMwJ35ZcemIRZDgYlvU-8r5oHC8EM" #dummy
+TOKEN = "SAMPLE" #dummy
 
 
 ######   List of different label    ######
