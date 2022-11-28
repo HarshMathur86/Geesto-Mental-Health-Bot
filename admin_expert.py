@@ -1,14 +1,12 @@
 import logging
 from telegram.inline.inlinekeyboardbutton import InlineKeyboardButton
 from telegram import Bot, ParseMode, InlineKeyboardMarkup
-import pandas as pd
-import numpy as np
 
 import schedule
 import time
 import threading
 
-from user import records_updater, message, update_messages_logs
+from user import message, update_messages_logs
 
 from database import execute_query, query_result_file_extractor
 
@@ -48,28 +46,8 @@ logger.info("SchedulerThread initiated")
 
 
 
-#Initialising experts list containg chat_id of experts
-
+# For containg Experts class object with chat_id as key
 expert_objects = {}
-
-
-try:
-    df = pd.read_csv("Resources/Experts/approved_experts.csv")
-    experts_list  = df.chat_id.values
-    experts_list = [c for c in experts_list]
-    del df
-except:
-    experts_list = []
-
-#Initailising experts request
-try:
-    df = pd.read_csv("Resources/Experts/requests.csv")
-    expert_requests  = df.chat_id.values
-    expert_requests = [c for c in expert_requests]
-    del df
-except:
-    expert_requests = []
-
 
 #Initialising query_recipient_data[chat_id of expert answering the query] = chat_id of the user who asked the query
 query_recipient_data = {}
@@ -378,28 +356,32 @@ def get_statistics():
     message = "<b>Following are some staticstics 🗒 of the bot:</b>\n\n"
     
     # no of user
-    chat_id_df = pd.read_csv("chat_id.csv")
-    message += "Total number of unique users : <b>{}</b>\n\n".format(chat_id_df.shape[0])
+    data = execute_query("select count(chat_id) from ARRIVED_USERS;")
+    message += "Total number of unique users : <b>{}</b>\n\n".format(data[0]["count"])
 
-    # no of issues
-    issues_df = pd.read_csv("Resources/Records/issues.csv")
-    message += "Total issues reported : <b>{}</b>\n\n".format(issues_df.shape[0])
+    # no of technical issues reported
+    data = execute_query("select count(issue) from TECHNICAL_ISSUES_REPORTED;")
+    message += "Technical issues reported : <b>{}</b>\n\n".format(data[0]["count"])
 
-    # no of doubts
-    unresolved_doubts_df = pd.read_csv("Resources/Records/doubts.csv")
-    resolved_doubts_df = pd.read_csv("Resources/Records/resolved_doubts.csv")
-    total_doubts = unresolved_doubts_df.shape[0] + resolved_doubts_df.shape[0]
+    # no of medical queries asked
+    data = execute_query("select count(que_id) from PATIENTS_QUERY;")
+    message += "Medical queries recieved : <b>{}</b>\n".format(data[0]["count"])
+    
+    data = execute_query("select count(que_id) from PATIENTS_QUERY where answered_or_not is TRUE;")
+    message += "Resolved : <b>{}</b>\n".format(data[0]["count"])
 
-    message += "Total doubts recieved : <b>{}</b>\n".format(total_doubts)
-    message += "Resolved : <b>{}</b>\n".format(resolved_doubts_df.shape[0])
-    message += "Unresolved : <b>{}</b>\n\n".format(unresolved_doubts_df.shape[0])
+    data = execute_query("select count(que_id) from PATIENTS_QUERY where answered_or_not is FALSE;")
+    message += "Unresolved : <b>{}</b>\n\n".format(data[0]["count"])
     
     # no of experts
-    message += "Total number of experts : <b>{}</b>\n".format(len(experts_list))
-    message += "Number of expert requests pending : <b>{}</b>\n\n".format(len(expert_requests))
+    data  = execute_query("select count(expert_id) from EXPERTS_DETAIL where approved_or_not is TRUE")
+    message += "Total number of experts : <b>{}</b>\n".format(data[0]["count"])
+    
+    data  = execute_query("select count(expert_id) from EXPERTS_DETAIL where approved_or_not is FALSE")
+    message += "Number of expert requests pending : <b>{}</b>\n\n".format(data[0]["count"])
 
     # no of cbt
-    from user import cbt_takers_count # to get real time value 
-    message += "Number of <i>CBT therapy</i> taken : <b>{}</b>\n".format(cbt_takers_count)
+    #from user import cbt_takers_count # to get real time value 
+    #message += "Number of <i>CBT therapy</i> taken : <b>{}</b>\n".format(cbt_takers_count)
 
     return message
